@@ -60,7 +60,7 @@ jobs:
         PATCH_DIR="${GITHUB_WORKSPACE}/kodi-src/tools/depends/target/ffmpeg/patches"
         mkdir -p $PATCH_DIR
         
-        # 1. 直接落地生成我们的软解核心代码，存放在外部临时区
+        # 1. 落地纯软解核心 C 代码
         cat << 'EOF' > $PATCH_DIR/av3adec.c
         #include "avcodec.h"
         #include "codec_internal.h"
@@ -95,14 +95,20 @@ jobs:
         };
         EOF
 
-        # 2. 修改 Kodi 的 FFmpeg CMakeLists.txt，彻底废除原生补丁机制
+        # 2. 落地独立的标准外部修改脚本（避开 CMake 的转义地狱）
+        cat << 'EOF' > $PATCH_DIR/apply_av3a.sh
+        #!/bin/sh
+        sed -i '/extern const FFCodec ff_aac_decoder;/a extern const FFCodec ff_av3a_decoder;' libavcodec/allcodecs.c
+        sed -i '/AV_CODEC_ID_OPUS,/a \    AV_CODEC_ID_AVS3A,' libavcodec/avcodec.h
+        sed -i '/OBJS-$(CONFIG_AVS_DECODER)/a OBJS-$(CONFIG_AV3A_DECODER)            += av3adec.o' libavcodec/Makefile
+        cp ../patches/av3adec.c ./libavcodec/
+        EOF
+        chmod +x $PATCH_DIR/apply_av3a.sh
+
+        # 3. 让 CMake 极其纯净地调用这个脚本
         FFMPEG_CMAKE="${GITHUB_WORKSPACE}/kodi-src/tools/depends/target/ffmpeg/CMakeLists.txt"
-        
-        # 允许追加特殊的配置选项
         echo 'list(APPEND FFMPEG_OPTIONS --enable-decoder=av3a --enable-parser=av3a)' >> $FFMPEG_CMAKE
-        
-        # 核心必杀技：直接通过 CMake 的 PATCH_COMMAND 用 sed 往 FFmpeg 源码里精准灌注代码，避开补丁行号冲突
-        sed -i '/PATCH_COMMAND/c \ \ \ \ \ \ \ \ PATCH_COMMAND sed -i "/extern const FFCodec ff_aac_decoder;/a extern const FFCodec ff_av3a_decoder;" libavcodec/allcodecs.c && sed -i "/AV_CODEC_ID_OPUS,/a \\\\    AV_CODEC_ID_AVS3A," libavcodec/avcodec.h && sed -i "/OBJS-\$(CONFIG_AVS_DECODER)/a OBJS-\$(CONFIG_AV3A_DECODER)            += av3adec.o" libavcodec/Makefile && cp ../patches/av3adec.c ./libavcodec/' $FFMPEG_CMAKE
+        sed -i '/PATCH_COMMAND/c \ \ \ \ \ \ \ \ PATCH_COMMAND ../patches/apply_av3a.sh' $FFMPEG_CMAKE
 
     - name: Build Kodi Depends (Dependencies)
       run: |
