@@ -56,11 +56,10 @@ jobs:
 
     - name: Integrate AV3A into Kodi FFmpeg
       run: |
-        cd $GITHUB_WORKSPACE
         PATCH_DIR="${GITHUB_WORKSPACE}/kodi-src/tools/depends/target/ffmpeg/patches"
         mkdir -p $PATCH_DIR
         
-        # 1. 落地纯软解核心 C 代码
+        # 1. 写入干净的软解 C 文件
         cat << 'EOF' > $PATCH_DIR/av3adec.c
         #include "avcodec.h"
         #include "codec_internal.h"
@@ -95,17 +94,17 @@ jobs:
         };
         EOF
 
-        # 2. 落地独立的标准外部修改脚本
-        cat << EOF > $PATCH_DIR/apply_av3a.sh
+        # 2. 写入干净的外部应用脚本，避开复杂的内部转义
+        cat << 'EOF' > $PATCH_DIR/apply_av3a.sh
         #!/bin/sh
         sed -i '/extern const FFCodec ff_aac_decoder;/a extern const FFCodec ff_av3a_decoder;' libavcodec/allcodecs.c
         sed -i '/AV_CODEC_ID_OPUS,/a \    AV_CODEC_ID_AVS3A,' libavcodec/avcodec.h
-        sed -i '/OBJS-\$(CONFIG_AVS_DECODER)/a OBJS-\$(CONFIG_AV3A_DECODER)            += av3adec.o' libavcodec/Makefile
-        cp $PATCH_DIR/av3adec.c ./libavcodec/
-EOF
+        sed -i '/OBJS-$(CONFIG_AVS_DECODER)/a OBJS-$(CONFIG_AV3A_DECODER)            += av3adec.o' libavcodec/Makefile
+        cp ../patches/av3adec.c ./libavcodec/
+        EOF
         chmod +x $PATCH_DIR/apply_av3a.sh
 
-        # 3. 让 CMake 使用硬编码绝对路径调用该脚本
+        # 3. 使用安全的常规替换逻辑，不干扰默认的 PATCH_COMMAND 关键字结构
         FFMPEG_CMAKE="${GITHUB_WORKSPACE}/kodi-src/tools/depends/target/ffmpeg/CMakeLists.txt"
         echo 'list(APPEND FFMPEG_OPTIONS --enable-decoder=av3a --enable-parser=av3a)' >> $FFMPEG_CMAKE
         sed -i "s|PATCH_COMMAND.*|PATCH_COMMAND $PATCH_DIR/apply_av3a.sh|g" $FFMPEG_CMAKE
@@ -114,7 +113,6 @@ EOF
       run: |
         cd $GITHUB_WORKSPACE/kodi-src/tools/depends
         ./bootstrap
-        
         ./configure --prefix=$GITHUB_WORKSPACE/kodi-dependencies \
                     --with-tarballs=$HOME/kodi-tarballs \
                     --host=arm-linux-androideabi \
@@ -127,9 +125,7 @@ EOF
       run: |
         cd $GITHUB_WORKSPACE/kodi-src
         mkdir build && cd build
-        cmake .. \
-          -DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/kodi-src/tools/depends/toolchain/android-arm-linux-androideabi.cmake \
-          -DANDROID_CONFIG=Release
+        cmake .. -DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/kodi-src/tools/depends/toolchain/android-arm-linux-androideabi.cmake -DANDROID_CONFIG=Release
         make -j2 apk
 
     - name: Upload Kodi AV3A APK Artifact
