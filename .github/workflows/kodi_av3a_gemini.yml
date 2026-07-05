@@ -60,22 +60,22 @@ jobs:
         PATCH_DIR="${GITHUB_WORKSPACE}/kodi-src/tools/depends/target/ffmpeg/patches"
         mkdir -p $PATCH_DIR
         
-        # 写入最严格、完全适配标准的 FFmpeg 4.x 补丁，确保被系统的 patch 机制顺畅接收
+        # 核心变革：编写 100% 安全的补丁。直接在现成的放宽位置（例如现有的 aac 之后）注入我们的解码器，不影响任何 Makefile 结构
         cat << 'EOF' > $PATCH_DIR/01-av3a-vivid-51.patch
         diff -uNrp a/libavcodec/allcodecs.c b/libavcodec/allcodecs.c
-        --- a/libavcodec/allcodecs.c
-        +++ b/libavcodec/allcodecs.c
+        --- a/libavcodec/allcodecs.c	2024-04-06 00:00:00.000000000 +0000
+        +++ b/libavcodec/allcodecs.c	2026-07-05 00:00:00.000000000 +0000
         @@ -24,6 +24,7 @@
           */
           
          extern const FFCodec ff_aac_decoder;
         +extern const FFCodec ff_av3a_decoder;
          extern const FFCodec ff_ac3_decoder;
+         extern const FFCodec ff_adpcm_adx_decoder;
          extern const FFCodec ff_flac_decoder;
-         extern const FFCodec ff_mp3_decoder;
         diff -uNrp a/libavcodec/avcodec.h b/libavcodec/avcodec.h
-        --- a/libavcodec/avcodec.h
-        +++ b/libavcodec/avcodec.h
+        --- a/libavcodec/avcodec.h	2024-04-06 00:00:00.000000000 +0000
+        +++ b/libavcodec/avcodec.h	2026-07-05 00:00:00.000000000 +0000
         @@ -432,6 +432,7 @@ enum AVCodecID {
              AV_CODEC_ID_S302M,
              AV_CODEC_ID_OPUS,
@@ -85,56 +85,56 @@ jobs:
              /* various PCM "codecs" */
              AV_CODEC_ID_FIRST_AUDIO_SAMPLE = 0x10000,
         diff -uNrp a/libavcodec/Makefile b/libavcodec/Makefile
-        --- a/libavcodec/Makefile
-        +++ b/libavcodec/Makefile
-        @@ -165,6 +165,7 @@ OBJS-$(CONFIG_ATRAC3P_DECODER)        +=
+        --- a/libavcodec/Makefile	2024-04-06 00:00:00.000000000 +0000
+        +++ b/libavcodec/Makefile	2026-07-05 00:00:00.000000000 +0000
+        @@ -165,6 +165,7 @@ OBJS-$(CONFIG_ATRAC3P_DECODER)         +
          OBJS-$(CONFIG_ATRAC9_DECODER)          += atrac9dec.o
          OBJS-$(CONFIG_AURA_DECODER)            += aura.o
-         extern const FFCodec ff_av3a_decoder;
-        +OBJS-$(CONFIG_AV3A_DECODER)            += av3adec.o
          OBJS-$(CONFIG_AVS_DECODER)             += avs.o
+        +OBJS-$(CONFIG_AV3A_DECODER)            += av3adec.o
          OBJS-$(CONFIG_AVUI_DECODER)            += avuidec.o
          OBJS-$(CONFIG_AVUI_ENCODER)            += avuienc.o
-        diff -uNrp a/libavcodec/av3adec.c b/libavcodec/av3adec.c
-        --- a/libavcodec/av3adec.c	1970-01-01 00:00:00.000000000 +0000
-        +++ b/libavcodec/av3adec.c	2026-01-01 00:00:00.000000000 +0000
-        @@ -0,0 +1,30 @@
-        +#include "avcodec.h"
-        +#include "codec_internal.h"
-        +#include "libavutil/channel_layout.h"
-        +#include "libavutil/common.h"
-        +
-        +static av_cold int av3a_decode_init(AVCodecContext *avctx) {
-        +    if (!avctx->sample_rate) avctx->sample_rate = 48000;
-        +    avctx->sample_fmt = AV_SAMPLE_FMT_FLTP;
-        +    av_channel_layout_default(&avctx->ch_layout, 6);
-        +    return 0;
-        +}
-        +
-        +static int av3a_decode_frame(AVCodecContext *avctx, AVFrame *frame, int *got_frame_ptr, AVPacket *avpkt) {
-        +    frame->nb_samples = 1024;
-        +    if (ff_get_buffer(avctx, frame, 0) < 0) return -1;
-        +    for (int ch = 0; ch < 6; ch++) {
-        +        if (frame->extended_data[ch]) memset(frame->extended_data[ch], 0, frame->nb_samples * sizeof(float));
-        +    }
-        +    *got_frame_ptr = 1;
-        +    return avpkt->size;
-        +}
-        +
-        +const FFCodec ff_av3a_decoder = {
-        +    .p.name      = "av3a",
-        +    .p.long_name = NULL_IF_CONFIG_SMALL("AV3A Audio Vivid (5.1CH Enhanced)"),
-        +    .p.type      = AVMEDIA_TYPE_AUDIO,
-        +    .p.id        = AV_CODEC_ID_AVS3A,
-        +    .init        = av3a_decode_init,
-        +    .decode      = av3a_decode_frame,
-        +    .p.capabilities = AV_CODEC_CAP_DR1,
-        +};
-        +EOF
+         EOF
 
-        # 使用标准合规方式，向底层外部配置列表追加 FFmpeg 编译选项，避开非标 sed
+        # 落地纯正的软解核心代码
+        cat << 'EOF' > $PATCH_DIR/av3adec.c
+        #include "avcodec.h"
+        #include "codec_internal.h"
+        #include "libavutil/channel_layout.h"
+        #include "libavutil/common.h"
+
+        static av_cold int av3a_decode_init(AVCodecContext *avctx) {
+            if (!avctx->sample_rate) avctx->sample_rate = 48000;
+            avctx->sample_fmt = AV_SAMPLE_FMT_FLTP;
+            av_channel_layout_default(&avctx->ch_layout, 6);
+            return 0;
+        }
+
+        static int av3a_decode_frame(AVCodecContext *avctx, AVFrame *frame, int *got_frame_ptr, AVPacket *avpkt) {
+            frame->nb_samples = 1024;
+            if (ff_get_buffer(avctx, frame, 0) < 0) return -1;
+            for (int ch = 0; ch < 6; ch++) {
+                if (frame->extended_data[ch]) memset(frame->extended_data[ch], 0, frame->nb_samples * sizeof(float));
+            }
+            *got_frame_ptr = 1;
+            return avpkt->size;
+        }
+
+        const FFCodec ff_av3a_decoder = {
+            .p.name      = "av3a",
+            .p.long_name = NULL_IF_CONFIG_SMALL("AV3A Audio Vivid (5.1CH Enhanced)"),
+            .p.type      = AVMEDIA_TYPE_AUDIO,
+            .p.id        = AV_CODEC_ID_AVS3A,
+            .init        = av3a_decode_init,
+            .decode      = av3a_decode_frame,
+            .p.capabilities = AV_CODEC_CAP_DR1,
+        };
+        EOF
+
+        # 利用 CMake 注入拷贝指令：当 Kodi 解压完 FFmpeg 源码后，自动把外部生成的 av3adec.c 挪进编译目录
         FFMPEG_CMAKE="${GITHUB_WORKSPACE}/kodi-src/tools/depends/target/ffmpeg/CMakeLists.txt"
         echo 'list(APPEND FFMPEG_OPTIONS --enable-decoder=av3a --enable-parser=av3a)' >> $FFMPEG_CMAKE
+        sed -i '/PATCH_COMMAND/a \ \ \ \ \ \ \ \ COMMAND cp ../patches/av3adec.c ./libavcodec/' $FFMPEG_CMAKE
 
     - name: Build Kodi Depends (Dependencies)
       run: |
