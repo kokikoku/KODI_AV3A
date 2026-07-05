@@ -93,21 +93,20 @@ jobs:
         '    .p.capabilities = AV_CODEC_CAP_DR1,' \
         '};' > "$PATCH_DIR/av3adec.c"
 
-        # 2. 写入应用补丁的外部 Shell 脚本
+        # 2. 写入极其健壮的全局无缝替换 Shell 脚本
+        # 彻底抛弃危险的“在某行后追加”语法，全部使用 100% 稳定的全局全文字符替换
         printf '%s\n' \
         '#!/bin/sh' \
-        'sed -i "/extern const FFCodec ff_aac_decoder;/a extern const FFCodec ff_av3a_decoder;" libavcodec/allcodecs.c' \
-        'sed -i "/AV_CODEC_ID_OPUS,/a \\    AV_CODEC_ID_AVS3A," libavcodec/avcodec.h' \
-        'sed -i "/OBJS-\$(CONFIG_AVS_DECODER)/a OBJS-\$(CONFIG_AV3A_DECODER)            += av3adec.o" libavcodec/Makefile' \
+        'sed -i "s/extern const FFCodec ff_aac_decoder;/extern const FFCodec ff_aac_decoder;\nextern const FFCodec ff_av3a_decoder;/g" libavcodec/allcodecs.c' \
+        'sed -i "s/AV_CODEC_ID_OPUS,/AV_CODEC_ID_OPUS,\n    AV_CODEC_ID_AVS3A,/g" libavcodec/avcodec.h' \
+        'sed -i "s/OBJS-\$(CONFIG_AVS_DECODER)             += avs.o/OBJS-\$(CONFIG_AVS_DECODER)             += avs.o\nOBJS-\$(CONFIG_AV3A_DECODER)            += av3adec.o/g" libavcodec/Makefile' \
         "cp $PATCH_DIR/av3adec.c ./libavcodec/" > "$PATCH_DIR/apply_av3a.sh"
         
         chmod +x "$PATCH_DIR/apply_av3a.sh"
 
-        # 3. 终极一击：不再动用任何脆弱的 sed 宏替换，直接通过标准外部定义追加解码器参数与脚本强制覆盖
+        # 3. 完美的外部注入
         FFMPEG_CMAKE="${GITHUB_WORKSPACE}/kodi-src/tools/depends/target/ffmpeg/CMakeLists.txt"
         echo 'list(APPEND FFMPEG_OPTIONS --enable-decoder=av3a --enable-parser=av3a)' >> "$FFMPEG_CMAKE"
-        
-        # 通过在 CMake 尾部强行重写覆盖，让配置流天生认准我们的外部 patch 逻辑
         echo "set(PATCH_COMMAND \"$PATCH_DIR/apply_av3a.sh\")" >> "$FFMPEG_CMAKE"
 
     - name: Build Kodi Depends (Dependencies)
