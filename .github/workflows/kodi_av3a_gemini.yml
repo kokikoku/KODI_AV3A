@@ -32,14 +32,20 @@ jobs:
           unzip zip tar python3 python3-pip gawk texinfo libncurses5-dev \
           libssl-dev ninja-build autoconf automake libtool autopoint curl git
 
-    - name: Set up Android NDK
+    - name: Set up Android NDK and Paths
       run: |
         mkdir -p $HOME/android-tools
         cd $HOME/android-tools
         wget https://dl.google.com/android/repository/android-ndk-${{ env.ANDROID_NDK_VERSION }}-linux.zip
         unzip -q android-ndk-${{ env.ANDROID_NDK_VERSION }}-linux.zip
-        echo "ANDROID_NDK_HOME=$HOME/android-tools/android-ndk-${{ env.ANDROID_NDK_VERSION }}" >> $GITHUB_ENV
-        echo "$HOME/android-tools/android-ndk-${{ env.ANDROID_NDK_VERSION }}" >> $GITHUB_PATH
+        
+        # 定义核心 NDK 路径
+        NDK_PATH="$HOME/android-tools/android-ndk-${{ env.ANDROID_NDK_VERSION }}"
+        # 核心修复：必须把 NDK 自带的专属主机交叉编译工具链 bin 目录塞进全局环境变量，否则配置脚本会误用 Ubuntu 系统的普通 gcc
+        NDK_TOOLCHAIN="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin"
+        
+        echo "ANDROID_NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
+        echo "$NDK_TOOLCHAIN" >> $GITHUB_PATH
 
     - name: Install Compatible CMake for Depends
       run: |
@@ -55,7 +61,6 @@ jobs:
         PATCH_DIR="${GITHUB_WORKSPACE}/kodi-src/tools/depends/target/ffmpeg/patches"
         mkdir -p $PATCH_DIR
         
-        # 写入补丁文件，不带任何不规范的空行，确保打补丁不报语法错误
         cat << 'EOF' > $PATCH_DIR/01-av3a-vivid-51.patch
         diff -uNrp a/libavcodec/allcodecs.c b/libavcodec/allcodecs.c
         --- a/libavcodec/allcodecs.c
@@ -127,7 +132,6 @@ jobs:
         +};
         +EOF
 
-        # 优化选项注入：不再依赖敏感的 sed 多行规则，直接通过文本替换和末尾追加确保执行成功
         FFMPEG_CMAKE="${GITHUB_WORKSPACE}/kodi-src/tools/depends/target/ffmpeg/CMakeLists.txt"
         echo 'list(APPEND FFMPEG_OPTIONS --enable-decoder=av3a --enable-parser=av3a)' >> $FFMPEG_CMAKE
 
@@ -135,10 +139,12 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/kodi-src/tools/depends
         ./bootstrap
-        ./configure --with-tarballs=$HOME/kodi-tarballs \
+        
+        # 核心修复：精简废弃参数，并提供正确的 --prefix 导出安装路径
+        ./configure --prefix=$GITHUB_WORKSPACE/kodi-dependencies \
+                    --with-tarballs=$HOME/kodi-tarballs \
                     --host=arm-linux-androideabi \
-                    --with-sdk=android-34 \
-                    --with-ndk=$ANDROID_NDK_HOME
+                    --with-sdk=android-34
         make -j2
 
     - name: Configure and Build Kodi APK
