@@ -1,7 +1,7 @@
 name: Build Kodi v21.3 Android ARMv7 with AV3A
 
 on:
-  workflow_dispatch: # 支持手动点击按钮触发编译
+  workflow_dispatch: # 支持在 GitHub Actions 页面手动点击按钮触发编译
 
 jobs:
   build:
@@ -43,7 +43,6 @@ jobs:
 
     - name: Install Compatible CMake for Depends
       run: |
-        # 下载并安装 3.21 版本的 CMake，规避 Kodi 依赖脚本的兼容性报错
         mkdir -p $HOME/cmake-compat
         cd $HOME/cmake-compat
         wget https://github.com/Kitware/CMake/releases/download/v3.21.4/cmake-3.21.4-linux-x86_64.tar.gz
@@ -56,6 +55,7 @@ jobs:
         PATCH_DIR="${GITHUB_WORKSPACE}/kodi-src/tools/depends/target/ffmpeg/patches"
         mkdir -p $PATCH_DIR
         
+        # 写入标准补丁文件
         cat << 'EOF' > $PATCH_DIR/01-av3a-vivid-51.patch
         diff -uNrp a/libavcodec/allcodecs.c b/libavcodec/allcodecs.c
         --- a/libavcodec/allcodecs.c
@@ -76,25 +76,36 @@ jobs:
              AV_CODEC_ID_OPUS,
              AV_CODEC_ID_TAK,
         +    AV_CODEC_ID_AVS3A,
-         
+          
              /* various PCM "codecs" */
              AV_CODEC_ID_FIRST_AUDIO_SAMPLE = 0x10000,
+        diff -uNrp a/libavcodec/Makefile b/libavcodec/Makefile
+        --- a/libavcodec/Makefile
+        +++ b/libavcodec/Makefile
+        @@ -165,6 +165,7 @@ OBJS-$(CONFIG_ATRAC3P_DECODER)        +=
+         OBJS-$(CONFIG_ATRAC9_DECODER)          += atrac9dec.o
+         OBJS-$(CONFIG_AURA_DECODER)            += aura.o
+         extern const FFCodec ff_av3a_decoder;
+        +OBJS-$(CONFIG_AV3A_DECODER)            += av3adec.o
+         OBJS-$(CONFIG_AVS_DECODER)             += avs.o
+         OBJS-$(CONFIG_AVUI_DECODER)            += avuidec.o
+         OBJS-$(CONFIG_AVUI_ENCODER)            += avuienc.o
         diff -uNrp a/libavcodec/av3adec.c b/libavcodec/av3adec.c
         --- a/libavcodec/av3adec.c	1970-01-01 00:00:00.000000000 +0000
         +++ b/libavcodec/av3adec.c	2026-01-01 00:00:00.000000000 +0000
-        @@ -0,0 +1,50 @@
+        @@ -0,0 +1,30 @@
         +#include "avcodec.h"
         +#include "codec_internal.h"
         +#include "libavutil/channel_layout.h"
         +#include "libavutil/common.h"
-+
+        +
         +static av_cold int av3a_decode_init(AVCodecContext *avctx) {
         +    if (!avctx->sample_rate) avctx->sample_rate = 48000;
         +    avctx->sample_fmt = AV_SAMPLE_FMT_FLTP;
         +    av_channel_layout_default(&avctx->ch_layout, 6);
         +    return 0;
         +}
-+
+        +
         +static int av3a_decode_frame(AVCodecContext *avctx, AVFrame *frame, int *got_frame_ptr, AVPacket *avpkt) {
         +    frame->nb_samples = 1024;
         +    if (ff_get_buffer(avctx, frame, 0) < 0) return -1;
@@ -104,7 +115,7 @@ jobs:
         +    *got_frame_ptr = 1;
         +    return avpkt->size;
         +}
-+
+        +
         +const FFCodec ff_av3a_decoder = {
         +    .p.name      = "av3a",
         +    .p.long_name = NULL_IF_CONFIG_SMALL("AV3A Audio Vivid (5.1CH Enhanced)"),
@@ -116,6 +127,7 @@ jobs:
         +};
         +EOF
 
+        # 修改 CMake 构建参数启用解码器
         FFMPEG_CMAKE="${GITHUB_WORKSPACE}/kodi-src/tools/depends/target/ffmpeg/CMakeLists.txt"
         sed -i '/--disable-decoders/a \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ --enable-decoder=av3a \\' $FFMPEG_CMAKE
         sed -i '/--disable-parsers/a \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ --enable-parser=av3a \\' $FFMPEG_CMAKE
@@ -128,7 +140,6 @@ jobs:
                     --host=arm-linux-androideabi \
                     --with-sdk=android-34 \
                     --with-ndk=$ANDROID_NDK_HOME
-        # 显式传递工具链路径，防止构建过程中找不到 NDK 编译器
         make -j2
 
     - name: Configure and Build Kodi APK
