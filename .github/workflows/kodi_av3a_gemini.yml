@@ -59,7 +59,7 @@ jobs:
         PATCH_DIR="${GITHUB_WORKSPACE}/kodi-src/tools/depends/target/ffmpeg/patches"
         mkdir -p $PATCH_DIR
         
-        # 1. 用 printf 精准生成软解 C 代码（避开 EOF 结束符带来的锁死隐患）
+        # 1. 精准生成软解 C 代码
         printf '%s\n' \
         '#include "avcodec.h"' \
         '#include "codec_internal.h"' \
@@ -93,7 +93,7 @@ jobs:
         '    .p.capabilities = AV_CODEC_CAP_DR1,' \
         '};' > "$PATCH_DIR/av3adec.c"
 
-        # 2. 用 printf 写入应用补丁的外部 Shell 脚本
+        # 2. 写入应用补丁的外部 Shell 脚本
         printf '%s\n' \
         '#!/bin/sh' \
         'sed -i "/extern const FFCodec ff_aac_decoder;/a extern const FFCodec ff_av3a_decoder;" libavcodec/allcodecs.c' \
@@ -103,10 +103,12 @@ jobs:
         
         chmod +x "$PATCH_DIR/apply_av3a.sh"
 
-        # 3. 使用安全的常规替换逻辑，不干扰默认的 PATCH_COMMAND 关键字结构
+        # 3. 终极一击：不再动用任何脆弱的 sed 宏替换，直接通过标准外部定义追加解码器参数与脚本强制覆盖
         FFMPEG_CMAKE="${GITHUB_WORKSPACE}/kodi-src/tools/depends/target/ffmpeg/CMakeLists.txt"
         echo 'list(APPEND FFMPEG_OPTIONS --enable-decoder=av3a --enable-parser=av3a)' >> "$FFMPEG_CMAKE"
-        sed -i "s|PATCH_COMMAND.*|PATCH_COMMAND $PATCH_DIR/apply_av3a.sh|g" "$FFMPEG_CMAKE"
+        
+        # 通过在 CMake 尾部强行重写覆盖，让配置流天生认准我们的外部 patch 逻辑
+        echo "set(PATCH_COMMAND \"$PATCH_DIR/apply_av3a.sh\")" >> "$FFMPEG_CMAKE"
 
     - name: Build Kodi Depends (Dependencies)
       run: |
