@@ -39,12 +39,12 @@ jobs:
         wget https://dl.google.com/android/repository/android-ndk-${{ env.ANDROID_NDK_VERSION }}-linux.zip
         unzip -q android-ndk-${{ env.ANDROID_NDK_VERSION }}-linux.zip
         
-        # 定义核心 NDK 路径
         NDK_PATH="$HOME/android-tools/android-ndk-${{ env.ANDROID_NDK_VERSION }}"
-        # 核心修复：必须把 NDK 自带的专属主机交叉编译工具链 bin 目录塞进全局环境变量，否则配置脚本会误用 Ubuntu 系统的普通 gcc
         NDK_TOOLCHAIN="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin"
         
+        # 写入全局环境变量
         echo "ANDROID_NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
+        echo "NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
         echo "$NDK_TOOLCHAIN" >> $GITHUB_PATH
 
     - name: Install Compatible CMake for Depends
@@ -140,11 +140,12 @@ jobs:
         cd $GITHUB_WORKSPACE/kodi-src/tools/depends
         ./bootstrap
         
-        # 核心修复：精简废弃参数，并提供正确的 --prefix 导出安装路径
+        # 核心修改：显式使用 --with-ndk-path 注入 NDK 物理路径，解决脚本终极报错
         ./configure --prefix=$GITHUB_WORKSPACE/kodi-dependencies \
                     --with-tarballs=$HOME/kodi-tarballs \
                     --host=arm-linux-androideabi \
-                    --with-sdk=android-34
+                    --with-sdk=android-34 \
+                    --with-ndk-path=$ANDROID_NDK_HOME
         make -j2
 
     - name: Configure and Build Kodi APK
