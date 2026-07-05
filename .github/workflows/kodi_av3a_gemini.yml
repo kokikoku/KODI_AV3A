@@ -59,12 +59,23 @@ jobs:
         PATCH_DIR="${GITHUB_WORKSPACE}/kodi-src/tools/depends/target/ffmpeg/patches"
         mkdir -p $PATCH_DIR
         
-        # 1. 精准生成软解 C 代码
+        # 1. 落地我们的全新宿主注入补丁脚本
+        # 放弃任何形式的中间插入，改用绝对安全的“尾部追加”法
         printf '%s\n' \
+        '#!/bin/sh' \
+        '# 向全局解码器注册表末尾硬追加我们的解码器声明' \
+        'echo "extern const FFCodec ff_av3a_decoder;" >> libavcodec/allcodecs.c' \
+        '' \
+        '# 将我们的解码器实现代码，强行追加到系统必然会编译的 aacdec.c 文件的最末尾' \
+        'cat << "EOC" >> libavcodec/aacdec.c' \
+        '' \
         '#include "avcodec.h"' \
         '#include "codec_internal.h"' \
         '#include "libavutil/channel_layout.h"' \
         '#include "libavutil/common.h"' \
+        '' \
+        '// 直接避开修改 avcodec.h，给自定义 ID 赋予一个绝对不会冲突的固定大整型值' \
+        '#define AV_CODEC_ID_AVS3A 0x153A' \
         '' \
         'static av_cold int av3a_decode_init(AVCodecContext *avctx) {' \
         '    if (!avctx->sample_rate) avctx->sample_rate = 48000;' \
@@ -91,20 +102,12 @@ jobs:
         '    .init        = av3a_decode_init,' \
         '    .decode      = av3a_decode_frame,' \
         '    .p.capabilities = AV_CODEC_CAP_DR1,' \
-        '};' > "$PATCH_DIR/av3adec.c"
-
-        # 2. 写入极其健壮的全局无缝替换 Shell 脚本
-        # 彻底抛弃危险的“在某行后追加”语法，全部使用 100% 稳定的全局全文字符替换
-        printf '%s\n' \
-        '#!/bin/sh' \
-        'sed -i "s/extern const FFCodec ff_aac_decoder;/extern const FFCodec ff_aac_decoder;\nextern const FFCodec ff_av3a_decoder;/g" libavcodec/allcodecs.c' \
-        'sed -i "s/AV_CODEC_ID_OPUS,/AV_CODEC_ID_OPUS,\n    AV_CODEC_ID_AVS3A,/g" libavcodec/avcodec.h' \
-        'sed -i "s/OBJS-\$(CONFIG_AVS_DECODER)             += avs.o/OBJS-\$(CONFIG_AVS_DECODER)             += avs.o\nOBJS-\$(CONFIG_AV3A_DECODER)            += av3adec.o/g" libavcodec/Makefile' \
-        "cp $PATCH_DIR/av3adec.c ./libavcodec/" > "$PATCH_DIR/apply_av3a.sh"
+        '};' \
+        'EOC' > "$PATCH_DIR/apply_av3a.sh"
         
         chmod +x "$PATCH_DIR/apply_av3a.sh"
 
-        # 3. 完美的外部注入
+        # 2. 完美的外部注入
         FFMPEG_CMAKE="${GITHUB_WORKSPACE}/kodi-src/tools/depends/target/ffmpeg/CMakeLists.txt"
         echo 'list(APPEND FFMPEG_OPTIONS --enable-decoder=av3a --enable-parser=av3a)' >> "$FFMPEG_CMAKE"
         echo "set(PATCH_COMMAND \"$PATCH_DIR/apply_av3a.sh\")" >> "$FFMPEG_CMAKE"
