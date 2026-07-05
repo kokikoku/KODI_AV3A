@@ -59,10 +59,20 @@ jobs:
         PATCH_DIR="${GITHUB_WORKSPACE}/kodi-src/tools/depends/target/ffmpeg/patches"
         mkdir -p $PATCH_DIR
         
-        # 1. 落地我们的全新宿主注入补丁脚本
-        # 放弃任何形式的中间插入，改用绝对安全的“尾部追加”法
+        # 1. 精准编写可以自定位、自适应路径的超级 Shell 补丁脚本
         printf '%s\n' \
         '#!/bin/sh' \
+        '# 动态寻找真正解压出来的 FFmpeg 源码核心目录' \
+        'REAL_SRC_DIR=$(find . -name "allcodecs.c" | sed "s|/libavcodec/allcodecs.c||g" | head -n 1)' \
+        '' \
+        'if [ -z "$REAL_SRC_DIR" ]; then' \
+        '    echo "Error: Cannot find FFmpeg source directory!"' \
+        '    exit 1' \
+        'fi' \
+        '' \
+        'cd "$REAL_SRC_DIR"' \
+        'echo "Successfully located FFmpeg root at: $(pwd)"' \
+        '' \
         '# 向全局解码器注册表末尾硬追加我们的解码器声明' \
         'echo "extern const FFCodec ff_av3a_decoder;" >> libavcodec/allcodecs.c' \
         '' \
@@ -107,7 +117,7 @@ jobs:
         
         chmod +x "$PATCH_DIR/apply_av3a.sh"
 
-        # 2. 完美的外部注入
+        # 2. 通过追加变量直接覆盖默认的 PATCH_COMMAND
         FFMPEG_CMAKE="${GITHUB_WORKSPACE}/kodi-src/tools/depends/target/ffmpeg/CMakeLists.txt"
         echo 'list(APPEND FFMPEG_OPTIONS --enable-decoder=av3a --enable-parser=av3a)' >> "$FFMPEG_CMAKE"
         echo "set(PATCH_COMMAND \"$PATCH_DIR/apply_av3a.sh\")" >> "$FFMPEG_CMAKE"
