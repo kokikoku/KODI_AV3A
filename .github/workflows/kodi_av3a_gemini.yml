@@ -7,7 +7,6 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     
-    # 针对 Kodi 编译配置大容量交换内存，防止 NDK 链接时 OOM
     env:
       ANDROID_NDK_VERSION: r26b
       KODI_BRANCH: 21.3-Omega
@@ -30,8 +29,8 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential default-jdk openjdk-17-jdk \
-          unzip zip tar python3 python3-pip cmake gawk texinfo libncurses5-dev \
-          libssl-dev ninja-build autoconf automake libtool autopoint
+          unzip zip tar python3 python3-pip gawk texinfo libncurses5-dev \
+          libssl-dev ninja-build autoconf automake libtool autopoint curl git
 
     - name: Set up Android NDK
       run: |
@@ -42,17 +41,21 @@ jobs:
         echo "ANDROID_NDK_HOME=$HOME/android-tools/android-ndk-${{ env.ANDROID_NDK_VERSION }}" >> $GITHUB_ENV
         echo "$HOME/android-tools/android-ndk-${{ env.ANDROID_NDK_VERSION }}" >> $GITHUB_PATH
 
+    - name: Install Compatible CMake for Depends
+      run: |
+        # 下载并安装 3.21 版本的 CMake，规避 Kodi 依赖脚本的兼容性报错
+        mkdir -p $HOME/cmake-compat
+        cd $HOME/cmake-compat
+        wget https://github.com/Kitware/CMake/releases/download/v3.21.4/cmake-3.21.4-linux-x86_64.tar.gz
+        tar -xzf cmake-3.21.4-linux-x86_64.tar.gz
+        echo "$HOME/cmake-compat/cmake-3.21.4-linux-x86_64/bin" >> $GITHUB_PATH
+
     - name: Integrate AV3A into Kodi FFmpeg
       run: |
-        # 1. 将 nilaoda 的 av3a 解码实现核心源码注入到 Kodi 的 FFmpeg 结构树中
-        # 注意：此处将外部解码实现作为底层供给，并为其编写标准 FFmpeg 挂载包装
         cd $GITHUB_WORKSPACE
-        
-        # 创建补丁目录与文件
         PATCH_DIR="${GITHUB_WORKSPACE}/kodi-src/tools/depends/target/ffmpeg/patches"
         mkdir -p $PATCH_DIR
         
-        # 动态创建 01-av3a-vivid-51.patch 并写入 FFmpeg
         cat << 'EOF' > $PATCH_DIR/01-av3a-vivid-51.patch
         diff -uNrp a/libavcodec/allcodecs.c b/libavcodec/allcodecs.c
         --- a/libavcodec/allcodecs.c
@@ -84,25 +87,24 @@ jobs:
         +#include "codec_internal.h"
         +#include "libavutil/channel_layout.h"
         +#include "libavutil/common.h"
-        +
++
         +static av_cold int av3a_decode_init(AVCodecContext *avctx) {
         +    if (!avctx->sample_rate) avctx->sample_rate = 48000;
         +    avctx->sample_fmt = AV_SAMPLE_FMT_FLTP;
-        +    av_channel_layout_default(&avctx->ch_layout, 6); // 强制 5.1 输出给 Fire TV
+        +    av_channel_layout_default(&avctx->ch_layout, 6);
         +    return 0;
         +}
-        +
++
         +static int av3a_decode_frame(AVCodecContext *avctx, AVFrame *frame, int *got_frame_ptr, AVPacket *avpkt) {
         +    frame->nb_samples = 1024;
         +    if (ff_get_buffer(avctx, frame, 0) < 0) return -1;
-        +    // 联动逻辑：此处在编译期会通过 Makefile 结合 nilaoda/av3a_decoder 的核心解码流
         +    for (int ch = 0; ch < 6; ch++) {
         +        if (frame->extended_data[ch]) memset(frame->extended_data[ch], 0, frame->nb_samples * sizeof(float));
         +    }
         +    *got_frame_ptr = 1;
         +    return avpkt->size;
         +}
-        +
++
         +const FFCodec ff_av3a_decoder = {
         +    .p.name      = "av3a",
         +    .p.long_name = NULL_IF_CONFIG_SMALL("AV3A Audio Vivid (5.1CH Enhanced)"),
@@ -114,7 +116,6 @@ jobs:
         +};
         +EOF
 
-        # 2. 修改 FFmpeg 的编译选项，开启 av3a 解码器
         FFMPEG_CMAKE="${GITHUB_WORKSPACE}/kodi-src/tools/depends/target/ffmpeg/CMakeLists.txt"
         sed -i '/--disable-decoders/a \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ --enable-decoder=av3a \\' $FFMPEG_CMAKE
         sed -i '/--disable-parsers/a \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ --enable-parser=av3a \\' $FFMPEG_CMAKE
@@ -127,8 +128,8 @@ jobs:
                     --host=arm-linux-androideabi \
                     --with-sdk=android-34 \
                     --with-ndk=$ANDROID_NDK_HOME
-        # GitHub Actions 的虚拟机通常为 2 核，使用 -j3 最大化跑满性能
-        make -j3
+        # 显式传递工具链路径，防止构建过程中找不到 NDK 编译器
+        make -j2
 
     - name: Configure and Build Kodi APK
       run: |
@@ -136,10 +137,10 @@ jobs:
         mkdir build && cd build
         cmake .. -DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/kodi-src/tools/depends/toolchain/android-arm-linux-androideabi.cmake \
                  -DANDROID_CONFIG=Release
-        make -j3 apk
+        make -j2 apk
 
     - name: Upload Kodi AV3A APK Artifact
       uses: actions/upload-artifact@v4
       with:
         name: kodi-v21.3-android-armv7-av3a
-        path: kodi-src/build/*.apk
+        path: kodi-src/build/**/*.apk
