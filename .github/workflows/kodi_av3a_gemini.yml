@@ -42,7 +42,6 @@ jobs:
         NDK_PATH="$HOME/android-tools/android-ndk-${{ env.ANDROID_NDK_VERSION }}"
         NDK_TOOLCHAIN="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin"
         
-        # 写入全局环境变量
         echo "ANDROID_NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
         echo "NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
         echo "$NDK_TOOLCHAIN" >> $GITHUB_PATH
@@ -140,12 +139,14 @@ jobs:
         cd $GITHUB_WORKSPACE/kodi-src/tools/depends
         ./bootstrap
         
-        # 核心修改：显式使用 --with-ndk-path 注入 NDK 物理路径，解决脚本终极报错
+        # 核心修复：1. 显式指定 --with-sdk-path 注入系统自带的 SDK 根目录。
+        #           2. 将 --with-sdk 降低到 21 匹配 ARMv7 工具链的最低兼容性，防止 runtime 出错。
         ./configure --prefix=$GITHUB_WORKSPACE/kodi-dependencies \
                     --with-tarballs=$HOME/kodi-tarballs \
                     --host=arm-linux-androideabi \
-                    --with-sdk=android-34 \
-                    --with-ndk-path=$ANDROID_NDK_HOME
+                    --with-sdk=android-21 \
+                    --with-ndk-path=$ANDROID_NDK_HOME \
+                    --with-sdk-path=$ANDROID_HOME
         make -j2
 
     - name: Configure and Build Kodi APK
