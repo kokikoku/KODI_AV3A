@@ -95,20 +95,20 @@ jobs:
         };
         EOF
 
-        # 2. 落地独立的标准外部修改脚本（避开 CMake 的转义地狱）
-        cat << 'EOF' > $PATCH_DIR/apply_av3a.sh
+        # 2. 落地独立的标准外部修改脚本
+        cat << EOF > $PATCH_DIR/apply_av3a.sh
         #!/bin/sh
         sed -i '/extern const FFCodec ff_aac_decoder;/a extern const FFCodec ff_av3a_decoder;' libavcodec/allcodecs.c
         sed -i '/AV_CODEC_ID_OPUS,/a \    AV_CODEC_ID_AVS3A,' libavcodec/avcodec.h
-        sed -i '/OBJS-$(CONFIG_AVS_DECODER)/a OBJS-$(CONFIG_AV3A_DECODER)            += av3adec.o' libavcodec/Makefile
-        cp ../patches/av3adec.c ./libavcodec/
-        EOF
+        sed -i '/OBJS-\$(CONFIG_AVS_DECODER)/a OBJS-\$(CONFIG_AV3A_DECODER)            += av3adec.o' libavcodec/Makefile
+        cp $PATCH_DIR/av3adec.c ./libavcodec/
+EOF
         chmod +x $PATCH_DIR/apply_av3a.sh
 
-        # 3. 让 CMake 极其纯净地调用这个脚本
+        # 3. 让 CMake 使用硬编码绝对路径调用该脚本
         FFMPEG_CMAKE="${GITHUB_WORKSPACE}/kodi-src/tools/depends/target/ffmpeg/CMakeLists.txt"
         echo 'list(APPEND FFMPEG_OPTIONS --enable-decoder=av3a --enable-parser=av3a)' >> $FFMPEG_CMAKE
-        sed -i '/PATCH_COMMAND/c \ \ \ \ \ \ \ \ PATCH_COMMAND ../patches/apply_av3a.sh' $FFMPEG_CMAKE
+        sed -i "s|PATCH_COMMAND.*|PATCH_COMMAND $PATCH_DIR/apply_av3a.sh|g" $FFMPEG_CMAKE
 
     - name: Build Kodi Depends (Dependencies)
       run: |
@@ -127,8 +127,9 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/kodi-src
         mkdir build && cd build
-        cmake .. -DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/kodi-src/tools/depends/toolchain/android-arm-linux-androideabi.cmake \
-                 -DANDROID_CONFIG=Release
+        cmake .. \
+          -DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/kodi-src/tools/depends/toolchain/android-arm-linux-androideabi.cmake \
+          -DANDROID_CONFIG=Release
         make -j2 apk
 
     - name: Upload Kodi AV3A APK Artifact
