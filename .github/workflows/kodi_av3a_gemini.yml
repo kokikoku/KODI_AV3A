@@ -139,7 +139,7 @@ jobs:
         make -j3 apk
 
     - name: Upload Kodi AV3A APK Artifact
-      uses: actions/actions-artifact@v4
+      uses: actions/upload-artifact@v4
       with:
         name: kodi-v21.3-android-armv7-av3a
         path: kodi-src/build/*.apk
