@@ -42,12 +42,10 @@ jobs:
         mkdir -p $FF_DIR/patches
 
         cat << 'EOF' > $FF_DIR/patches/0001-av3a.patch
-diff --git a/libavcodec/allcodecs.c b/libavcodec/allcodecs.c
-@@
- extern const FFCodec ff_av3a_decoder;
-@@
- REGISTER_DECODER(AV3A, av3a);
-EOF
+        diff --git a/libavcodec/allcodecs.c b/libavcodec/allcodecs.c@@
+        extern const FFCodec ff_av3a_decoder;@@
+        REGISTER_DECODER(AV3A, av3a);
+        EOF
 
     ################################################
     # 4. AUDIO ENGINE INJECTION (REAL POINT)
