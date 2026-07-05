@@ -59,55 +59,54 @@ jobs:
         PATCH_DIR="${GITHUB_WORKSPACE}/kodi-src/tools/depends/target/ffmpeg/patches"
         mkdir -p $PATCH_DIR
         
-        # 1. 写入干净的软解 C 文件
-        cat << 'EOF' > $PATCH_DIR/av3adec.c
-        #include "avcodec.h"
-        #include "codec_internal.h"
-        #include "libavutil/channel_layout.h"
-        #include "libavutil/common.h"
+        # 1. 用 printf 精准生成软解 C 代码（避开 EOF 结束符带来的锁死隐患）
+        printf '%s\n' \
+        '#include "avcodec.h"' \
+        '#include "codec_internal.h"' \
+        '#include "libavutil/channel_layout.h"' \
+        '#include "libavutil/common.h"' \
+        '' \
+        'static av_cold int av3a_decode_init(AVCodecContext *avctx) {' \
+        '    if (!avctx->sample_rate) avctx->sample_rate = 48000;' \
+        '    avctx->sample_fmt = AV_SAMPLE_FMT_FLTP;' \
+        '    av_channel_layout_default(&avctx->ch_layout, 6);' \
+        '    return 0;' \
+        '}' \
+        '' \
+        'static int av3a_decode_frame(AVCodecContext *avctx, AVFrame *frame, int *got_frame_ptr, AVPacket *avpkt) {' \
+        '    frame->nb_samples = 1024;' \
+        '    if (ff_get_buffer(avctx, frame, 0) < 0) return -1;' \
+        '    for (int ch = 0; ch < 6; ch++) {' \
+        '        if (frame->extended_data[ch]) memset(frame->extended_data[ch], 0, frame->nb_samples * sizeof(float));' \
+        '    }' \
+        '    *got_frame_ptr = 1;' \
+        '    return avpkt->size;' \
+        '}' \
+        '' \
+        'const FFCodec ff_av3a_decoder = {' \
+        '    .p.name      = "av3a",' \
+        '    .p.long_name = NULL_IF_CONFIG_SMALL("AV3A Audio Vivid (5.1CH Enhanced)"),' \
+        '    .p.type      = AVMEDIA_TYPE_AUDIO,' \
+        '    .p.id        = AV_CODEC_ID_AVS3A,' \
+        '    .init        = av3a_decode_init,' \
+        '    .decode      = av3a_decode_frame,' \
+        '    .p.capabilities = AV_CODEC_CAP_DR1,' \
+        '};' > "$PATCH_DIR/av3adec.c"
 
-        static av_cold int av3a_decode_init(AVCodecContext *avctx) {
-            if (!avctx->sample_rate) avctx->sample_rate = 48000;
-            avctx->sample_fmt = AV_SAMPLE_FMT_FLTP;
-            av_channel_layout_default(&avctx->ch_layout, 6);
-            return 0;
-        }
-
-        static int av3a_decode_frame(AVCodecContext *avctx, AVFrame *frame, int *got_frame_ptr, AVPacket *avpkt) {
-            frame->nb_samples = 1024;
-            if (ff_get_buffer(avctx, frame, 0) < 0) return -1;
-            for (int ch = 0; ch < 6; ch++) {
-                if (frame->extended_data[ch]) memset(frame->extended_data[ch], 0, frame->nb_samples * sizeof(float));
-            }
-            *got_frame_ptr = 1;
-            return avpkt->size;
-        }
-
-        const FFCodec ff_av3a_decoder = {
-            .p.name      = "av3a",
-            .p.long_name = NULL_IF_CONFIG_SMALL("AV3A Audio Vivid (5.1CH Enhanced)"),
-            .p.type      = AVMEDIA_TYPE_AUDIO,
-            .p.id        = AV_CODEC_ID_AVS3A,
-            .init        = av3a_decode_init,
-            .decode      = av3a_decode_frame,
-            .p.capabilities = AV_CODEC_CAP_DR1,
-        };
-        EOF
-
-        # 2. 写入干净的外部应用脚本，避开复杂的内部转义
-        cat << 'EOF' > $PATCH_DIR/apply_av3a.sh
-        #!/bin/sh
-        sed -i '/extern const FFCodec ff_aac_decoder;/a extern const FFCodec ff_av3a_decoder;' libavcodec/allcodecs.c
-        sed -i '/AV_CODEC_ID_OPUS,/a \    AV_CODEC_ID_AVS3A,' libavcodec/avcodec.h
-        sed -i '/OBJS-$(CONFIG_AVS_DECODER)/a OBJS-$(CONFIG_AV3A_DECODER)            += av3adec.o' libavcodec/Makefile
-        cp ../patches/av3adec.c ./libavcodec/
-        EOF
-        chmod +x $PATCH_DIR/apply_av3a.sh
+        # 2. 用 printf 写入应用补丁的外部 Shell 脚本
+        printf '%s\n' \
+        '#!/bin/sh' \
+        'sed -i "/extern const FFCodec ff_aac_decoder;/a extern const FFCodec ff_av3a_decoder;" libavcodec/allcodecs.c' \
+        'sed -i "/AV_CODEC_ID_OPUS,/a \\    AV_CODEC_ID_AVS3A," libavcodec/avcodec.h' \
+        'sed -i "/OBJS-\$(CONFIG_AVS_DECODER)/a OBJS-\$(CONFIG_AV3A_DECODER)            += av3adec.o" libavcodec/Makefile' \
+        "cp $PATCH_DIR/av3adec.c ./libavcodec/" > "$PATCH_DIR/apply_av3a.sh"
+        
+        chmod +x "$PATCH_DIR/apply_av3a.sh"
 
         # 3. 使用安全的常规替换逻辑，不干扰默认的 PATCH_COMMAND 关键字结构
         FFMPEG_CMAKE="${GITHUB_WORKSPACE}/kodi-src/tools/depends/target/ffmpeg/CMakeLists.txt"
-        echo 'list(APPEND FFMPEG_OPTIONS --enable-decoder=av3a --enable-parser=av3a)' >> $FFMPEG_CMAKE
-        sed -i "s|PATCH_COMMAND.*|PATCH_COMMAND $PATCH_DIR/apply_av3a.sh|g" $FFMPEG_CMAKE
+        echo 'list(APPEND FFMPEG_OPTIONS --enable-decoder=av3a --enable-parser=av3a)' >> "$FFMPEG_CMAKE"
+        sed -i "s|PATCH_COMMAND.*|PATCH_COMMAND $PATCH_DIR/apply_av3a.sh|g" "$FFMPEG_CMAKE"
 
     - name: Build Kodi Depends (Dependencies)
       run: |
@@ -125,7 +124,9 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/kodi-src
         mkdir build && cd build
-        cmake .. -DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/kodi-src/tools/depends/toolchain/android-arm-linux-androideabi.cmake -DANDROID_CONFIG=Release
+        cmake .. \
+          -DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/kodi-src/tools/depends/toolchain/android-arm-linux-androideabi.cmake \
+          -DANDROID_CONFIG=Release
         make -j2 apk
 
     - name: Upload Kodi AV3A APK Artifact
