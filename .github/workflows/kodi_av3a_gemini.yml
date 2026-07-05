@@ -1,7 +1,7 @@
 name: Build Kodi v21.3 Android ARMv7 with AV3A
 
 on:
-  workflow_dispatch: # 支持在 GitHub Actions 页面手动点击按钮触发编译
+  workflow_dispatch: 
 
 jobs:
   build:
@@ -55,7 +55,7 @@ jobs:
         PATCH_DIR="${GITHUB_WORKSPACE}/kodi-src/tools/depends/target/ffmpeg/patches"
         mkdir -p $PATCH_DIR
         
-        # 写入标准补丁文件
+        # 写入补丁文件，不带任何不规范的空行，确保打补丁不报语法错误
         cat << 'EOF' > $PATCH_DIR/01-av3a-vivid-51.patch
         diff -uNrp a/libavcodec/allcodecs.c b/libavcodec/allcodecs.c
         --- a/libavcodec/allcodecs.c
@@ -127,10 +127,9 @@ jobs:
         +};
         +EOF
 
-        # 修改 CMake 构建参数启用解码器
+        # 优化选项注入：不再依赖敏感的 sed 多行规则，直接通过文本替换和末尾追加确保执行成功
         FFMPEG_CMAKE="${GITHUB_WORKSPACE}/kodi-src/tools/depends/target/ffmpeg/CMakeLists.txt"
-        sed -i '/--disable-decoders/a \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ --enable-decoder=av3a \\' $FFMPEG_CMAKE
-        sed -i '/--disable-parsers/a \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ --enable-parser=av3a \\' $FFMPEG_CMAKE
+        echo 'list(APPEND FFMPEG_OPTIONS --enable-decoder=av3a --enable-parser=av3a)' >> $FFMPEG_CMAKE
 
     - name: Build Kodi Depends (Dependencies)
       run: |
